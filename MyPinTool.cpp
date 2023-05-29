@@ -3,11 +3,26 @@
 KNOB< std::string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "f", "result.txt", "specify log file path");
 
 //日志文件
-FILE* new_stdout = NULL;
+thread_local FILE* thread_new_stdout = init_thread_stdout();
+
+FILE* init_thread_stdout() {
+	char name_buf[50] = { 0 };
+	FILE* new_stdout = NULL;
+	pid_t tid = syscall(SYS_gettid);
+
+	sprintf(name_buf, "thread_%ld_result.txt", tid);
+	new_stdout = fopen(name_buf, "w+");
+	if (new_stdout == NULL) {
+		fprintf(stderr, "error_info:init_thread_stdout failed threadid%lx\terrno:%lx\n", tid, errno);
+		new_stdout = stdout;
+	}
+	return new_stdout;
+}
 
 //主模块的内存边界
 ADDRINT imageLow;	
 ADDRINT imageHigh;	
+
 
 //SymInfo相关定义
 SymInfo SymInfoMgr;
@@ -159,6 +174,10 @@ void SyscallExit(THREADID threadIndex, CONTEXT* ctxt, SYSCALL_STANDARD std, void
 	LOG_INFO("syscall_info:\taddress:0x%lx\torder:0x%lx\treturn:0x%lx\n", src, order, ret);
 }
 
+void syscall_callback_init() {
+
+}
+
 //IMAGE粒度的插桩例程
 static void ImageLoad(IMG img, void* param) {
 
@@ -215,13 +234,6 @@ int main(int argc, char* argv[]) {
 
 	if (PIN_Init(argc, argv)) {
 		return true;
-	}
-
-	new_stdout = fopen(KnobOutputFile.Value().c_str(), "w+");
-
-	if (new_stdout == NULL) {
-		printf("error_info fopen failed errno:0x%x", errno);
-		exit(1);
 	}
 
 	IMG_AddInstrumentFunction(ImageLoad, NULL);
