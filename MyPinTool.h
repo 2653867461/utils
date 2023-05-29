@@ -1,6 +1,7 @@
 #pragma once
-
 #include <pin.H>
+
+#include <stdio.h>
 
 #include <string>
 #include <map>
@@ -9,18 +10,22 @@
 #include <stack>
 #include <memory>
 
-#include "unistd_64.h"
-//#include <x86_64-linux-gnu/asm/unistd_64.h>
+#include <unistd.h>
+
+#include <x86_64-linux-gnu/sys/syscall.h>
+#include <x86_64-linux-gnu/asm/unistd_64.h>
 
 #define ADDRINT unsigned long long 
 
 //日志文件描述符
-extern FILE* new_stdout;
+FILE* init_thread_stdout();
+extern thread_local FILE* thread_new_stdout;
 
-#define LOG_INFO(fmt,...) fprintf(new_stdout,fmt,##__VA_ARGS__);
+//输出日志宏
+#define LOG_INFO(fmt,...) fprintf(thread_new_stdout,fmt,##__VA_ARGS__);
 
 #ifdef DEBUG
-#define DEBUG_INFO(fmt,...) fprintf(new_stdout,"debug_info:\t"#fmt,##__VA_ARGS__); 
+#define DEBUG_INFO(fmt,...) fprintf(thread_new_stdout,"debug_info:\t"#fmt,##__VA_ARGS__); 
 #else
 #define DEBUG_INFO(fmt,...) 
 #endif // DEBUG
@@ -87,7 +92,7 @@ void call_callback_init();
 /*
 	系统调用监控(syscall)
 */
-//SyscallTraceInfo，保存系统调用上下文信息
+//SyscallTraceInfo，保存系统调用上下文信息，一个线程在同一时间内只能执行一个系统调用。
 class SyscallTraceInfo {
 public:
 	//std::tuple<ADDRINT:系统调用号,ADDRINT:系统调用的地址,ADDRINT:可选参数，用于回调函数>
@@ -104,6 +109,9 @@ extern SyscallTraceInfo SyscallTraceInfoMgr;
 void SyscallEntry(THREADID threadIndex, CONTEXT* ctxt, SYSCALL_STANDARD std, void* param);
 void SyscallExit(THREADID threadIndex, CONTEXT* ctxt, SYSCALL_STANDARD std, void* param);
 
+//在函数中初始化syscall回调函数，在main函数中调用
+void syscall_callback_init();
+
 //系统调用回调函数原型
 using SYSCALL_MONITOR_CALLBACK_BEFORE = void(*)(THREADID threadIndex, CONTEXT* ctxt, SYSCALL_STANDARD std);
 using SYSCALL_MONITOR_CALLBACK_AFTER = void(*)(THREADID threadIndex, CONTEXT* ctxt, SYSCALL_STANDARD std);
@@ -117,6 +125,49 @@ extern std::map<ADDRINT, std::tuple<SYSCALL_MONITOR_CALLBACK_BEFORE, SYSCALL_MON
 #define PRINTF_SYSCALL_INFO(sysname,type1,name1,type2,value2)
 
 void after_openat(THREADID threadIndex, CONTEXT* ctxt, SYSCALL_STANDARD std);
+
+/*
+虚拟环境
+*/
+enum HandleType { FILE_OBJECT, SOCKET_OBJECT };
+
+class HnadleObject {
+public:
+	HnadleObject(std::string name, HandleType type) : handle_desc(name), handle_type(type) {};
+private:
+	std::string handle_desc;
+	HandleType handle_type;
+};
+
+class FileObject :HnadleObject {
+public:
+	FileObject(std::string path) : HnadleObject(path, HandleType::FILE_OBJECT) {};
+	FileObject(FileObject tmp) {};
+private:
+	bool redirct;
+};
+
+class SocketObject :HnadleObject {
+public:
+	SocketObject(std::string _ip, ushort _port):ip(_ip),port(_port) {};
+
+private:
+	std::string ip;
+	ushort port;
+};
+
+class VirtualEnvironment {
+public:
+	VirtualEnvironment() {};
+	void insert_handle(int fd, std::shared_ptr<HnadleObject> object) {
+		handle_table[fd] = object;
+	}
+	const std::shared_ptr<HnadleObject>& query_handle(int fd) {
+		return handle_table[fd];
+	}
+private:
+	std::map<int, std::shared_ptr<HnadleObject>> handle_table;
+};
 
 
 /*
